@@ -1,0 +1,3 @@
+#!/bin/sh
+umask 077
+exec /usr/bin/svlogd -tt /var/log/a-la-maison

@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+exec 2>&1
+umask 077
+test -d /home/imac-serveur/Partage
+cd /opt/a-la-maison
+exec /usr/bin/chpst -u imac-serveur /usr/bin/python3 -B -u /opt/a-la-maison/server.py \
+  --root /home/imac-serveur/Partage \
+  --state /home/imac-serveur/.local/state/a-la-maison \
+  --family-root /home/imac-serveur/.local/share/a-la-maison-famille \
+  --port 8766

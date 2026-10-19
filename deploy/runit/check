@@ -1,0 +1,6 @@
+#!/bin/sh
+exec /usr/bin/curl --fail --silent --output /dev/null --max-time 5 \
+  -H 'Host: imac-serveur.tail90bee9.ts.net' \
+  -H 'X-Forwarded-Host: imac-serveur.tail90bee9.ts.net' \
+  -H 'X-Forwarded-Proto: https' \
+  http://127.0.0.1:8766/

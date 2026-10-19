@@ -1,0 +1,18 @@
+# Lourd et identique d'une version à l'autre : gardé en local, hors Git
+assets/wallpaper.mp4
+# Captures et profils des tests navigateur
+output/
+# Python / Node
+__pycache__/
+*.pyc
+node_modules/
+# Données et état (ne jamais versionner)
+*.tar
+*.tar.gz
+state/
+runtime/
+auth.json
+accounts.json
+remembered-sessions.json
+# macOS
+.DS_Store
