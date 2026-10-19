@@ -31,6 +31,69 @@ STATIC['/assets/wallpaper.mp4'] = ('assets/wallpaper.mp4', 'video/mp4')
 STATIC['/assets/wallpaper.jpg'] = ('assets/wallpaper.jpg', 'image/jpeg')
 WALLPAPER = {'/assets/wallpaper.mp4', '/assets/wallpaper.jpg'}
 STATIC['/photos-service.js'] = ('photos-service.js', 'text/javascript; charset=utf-8')
+HEALTH_DIR = Path('/var/lib/maison-sauvegarde')
+HEALTH_MAX = 8192
+HEALTH_STALE = 3 * 3600          # mesure SMART horaire : au-delà de 3 h, elle est périmée
+BACKUP_STALE = 36 * 3600         # sauvegarde nocturne : au-delà de 36 h, une nuit a été manquée
+
+
+def read_health(directory, name):
+    """Petit JSON écrit par root (sauvegarde, SMART). Absent, lien ou invalide -> None."""
+    try:
+        fd = os.open(Path(directory) / name, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        return None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > HEALTH_MAX:
+            return None
+        data = json.loads(os.read(fd, HEALTH_MAX + 1))
+        return (data, int(info.st_mtime)) if isinstance(data, dict) else None
+    except (OSError, ValueError):
+        return None
+    finally:
+        os.close(fd)
+
+
+def health_number(value):
+    return value if type(value) is int and 0 <= value < 10 ** 9 else None
+
+
+def health_report(directory, now=None):
+    """Résumé lisible par tous les membres : aucun chemin, aucun nom de fichier."""
+    now = time.time() if now is None else now
+    report = {'backup': None, 'disks': []}
+    found = read_health(directory, 'status.json')
+    if found:
+        data, checked = found
+        ok = data.get('ok') is True
+        report['backup'] = {'state': 'ok' if ok and now - checked < BACKUP_STALE else 'attention',
+                            'ok': ok, 'checkedAt': checked,
+                            'snapshots': health_number(data.get('snapshots')),
+                            'freePercent': health_number(data.get('freePercent'))}
+    found = read_health(directory, 'sante.json')
+    if found:
+        data, checked = found
+        disks = data.get('disks') if isinstance(data.get('disks'), list) else []
+        for disk in disks[:4]:
+            if not isinstance(disk, dict) or disk.get('role') not in ('imac', 'sauvegarde'):
+                continue
+            entry = {'role': disk['role'], 'checkedAt': checked,
+                     'passed': disk['passed'] if type(disk.get('passed')) is bool else None}
+            for key in ('reallocated', 'pending', 'uncorrectable', 'powerOnHours', 'temperature'):
+                entry[key] = health_number(disk.get(key))
+            if entry['passed'] is False or (entry['pending'] or 0) > 0 or (entry['uncorrectable'] or 0) > 0:
+                entry['state'] = 'alerte'
+            elif entry['passed'] is None:
+                entry['state'] = 'inconnu'
+            elif (entry['reallocated'] or 0) > 0 or now - checked >= HEALTH_STALE:
+                entry['state'] = 'attention'
+            else:
+                entry['state'] = 'ok'
+            report['disks'].append(entry)
+    return report
+
+
 SEARCH_ITEMS = 10000
 SEARCH_DIRS = 500
 SEARCH_RESULTS = 200
@@ -127,7 +190,7 @@ def name_only(name):
 
 class Service(ThreadingHTTPServer):
     daemon_threads = True
-    def __init__(self, address, static, root, state, max_upload=50 * 1024 * 1024, *, family_root):
+    def __init__(self, address, static, root, state, max_upload=50 * 1024 * 1024, *, family_root, health_dir=HEALTH_DIR):
         if address[0] != '127.0.0.1':
             raise ValueError('Le service doit écouter uniquement sur 127.0.0.1, derrière Tailscale Serve.')
         self.static, self.root, self.state, self.family_root = map(
@@ -137,6 +200,7 @@ class Service(ThreadingHTTPServer):
             for b in paths[i + 1:]:
                 if a == b or a in b.parents or b in a.parents:
                     raise ValueError('Interface, fichiers, comptes et espace famille doivent être distincts et non imbriqués.')
+        self.health_dir = Path(health_dir)
         self.sessions, self.attempts = {}, []
         self.lock = threading.RLock()
         self.slots = threading.BoundedSemaphore(8)
@@ -469,6 +533,11 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(200, {'totalBytes': total, 'usedBytes': used,
                             'availableBytes': available, 'reservedBytes': free - available,
                             'usedPercent': round(used * 100 / total, 2)})
+            return
+        if endpoint == '/api/health':
+            if urlsplit(self.path).query:
+                raise Fault(400, 'Cette mesure ne prend aucun paramètre.')
+            self.reply(200, health_report(self.server.health_dir))
             return
         if endpoint == '/api/accounts':
             self.require_admin(account)
@@ -805,10 +874,11 @@ def main():
     parser.add_argument('--family-root', type=Path, required=True, help='Dossier neuf hors de Partage et de l’état')
     parser.add_argument('--port', type=int, default=8767)
     parser.add_argument('--max-upload-mib', type=int, default=50)
+    parser.add_argument('--health-dir', type=Path, default=HEALTH_DIR, help='État sauvegarde/SMART écrit par root')
     args = parser.parse_args()
     if not 1 <= args.max_upload_mib <= 1024:
         parser.error('Limite attendue entre 1 et 1024 Mio.')
-    with Service(('127.0.0.1', args.port), Path(__file__).parent, args.root, args.state, args.max_upload_mib * 1024 * 1024, family_root=args.family_root) as server:
+    with Service(('127.0.0.1', args.port), Path(__file__).parent, args.root, args.state, args.max_upload_mib * 1024 * 1024, family_root=args.family_root, health_dir=args.health_dir) as server:
         print(f'À la maison : {server.origin}/ — PID {os.getpid()}', flush=True)
         print(f'Écoute interne : 127.0.0.1:{server.server_port}. Accès HTTPS privé via Tailscale Serve.', flush=True)
         try:

@@ -55,6 +55,10 @@ L’ajout utilise les routes dossiers/téléversement existantes, avec CSRF, lon
 
 `accounts.py` est inchangé : comptes, mots de passe, rôles et chemins des espaces sont conservés. Les dossiers privés sont isolés dans le site ; l’administrateur Linux conserve un accès technique au disque. Le fond animé, la mesure du stockage et les fonctions Fichiers/Réglages sont maintenus. Notes reste en préparation.
 
+## Carte santé de l'iMac
+
+La carte « L'iMac à la maison » de l'accueil affiche l'état SMART du disque de l'iMac (relevé chaque heure par `maison-sante`, root, lecture seule) et la dernière sauvegarde vers le LaCie (`maison-sauvegarde`, chaque nuit). Le site lit seulement deux petits JSON dans `/var/lib/maison-sauvegarde` via `GET /api/health` (connexion requise, aucun paramètre, aucun chemin ni nom de périphérique renvoyé). Pastille verte : disque sain et sauvegarde de moins de 36 h. Orange : secteurs réalloués, relevé périmé, nuit manquée ou échec. Rouge : SMART en échec, secteurs en attente ou illisibles. Installation : `deploy/sauvegarde/installer-sauvegarde.sh`. Vérification visuelle : `node test_health_browser.cjs`.
+
 ## Tests locaux
 
 ```sh

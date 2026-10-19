@@ -62,7 +62,7 @@ function home(){shell(`<section class="greet">
 <div class="gauge"><svg viewBox="0 0 120 120" aria-hidden="true"><circle class="g-track" cx="60" cy="60" r="50"/><circle class="g-fill" id="storage-fill" cx="60" cy="60" r="50" pathLength="100"/></svg><div class="g-val" id="storage-gauge" role="img" aria-label="Stockage non mesuré"><b id="storage-percent">—</b><i>%</i><small>utilisé</small></div></div>
 <div class="metrics"><div><b id="storage-used">—</b><small>utilisés</small></div><div><b id="storage-available">—</b><small>disponibles</small></div></div>
 <p class="storage-detail" id="storage-detail" role="status">Lecture du stockage…</p></article>
-<a class="card row slide" href="#settings" ${D(.84)}><div><small>L’iMac à la maison</small><strong>20 pouces · fin 2006</strong><span class="status"><i></i>Non vérifié depuis ici</span></div>${icon('imac')}</a>
+<a class="card row slide" id="health-card" href="#settings" ${D(.84)}><div><small>L’iMac à la maison</small><strong>20 pouces · fin 2006</strong><span class="status" id="health-status" data-state="inconnu" aria-live="polite"><i></i><span>Non vérifié depuis ici</span></span><span class="status-detail" id="health-detail"></span></div>${icon('imac')}</a>
 <article class="card row slide" ${D(.96)}><div><small>Pensé pour la maison</small><strong>Petit serveur. Bel espace.</strong><span class="fine">Mes fichiers pour votre espace privé, Famille pour les fichiers en commun. Vos photos ont aussi leur galerie.</span></div></article>
 </aside>`);}
 

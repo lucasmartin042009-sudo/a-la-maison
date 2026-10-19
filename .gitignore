@@ -16,3 +16,6 @@ accounts.json
 remembered-sessions.json
 # macOS
 .DS_Store
+
+# Espaces de travail des agents (git worktree)
+.worktrees/

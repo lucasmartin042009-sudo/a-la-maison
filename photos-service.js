@@ -150,7 +150,7 @@ $('#photo-picker').onchange=async event=>{
   }catch(error){errors.push(error.message);}
   finally{
     localBusy=false;
-    if(route()==='photos')await photosPage();else if(route()==='home')await refreshStorage();else if(route()==='files')await filesPage();
+    if(route()==='photos')await photosPage();else if(route()==='home')await refreshHomeCards();else if(route()==='files')await filesPage();
     if(errors.length){
       modal('<h2>Résultat de l’ajout</h2><p>'+successes+' photo(s) enregistrée(s).</p><div class="preview" id="photo-upload-errors"></div>');
       $('#photo-upload-errors').textContent=errors.join('\n');

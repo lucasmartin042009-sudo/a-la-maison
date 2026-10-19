@@ -19,8 +19,9 @@ MIN_FREE_PERCENT=5
 log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 fail() {
   log "ECHEC : $*"
-  mkdir -p "$STATUS_DIR"
+  install -d -m 0755 "$STATUS_DIR"
   printf '{"ok":false,"at":"%s","message":"%s"}\n' "$NOW" "$*" > "$STATUS_DIR/status.json.tmp"
+  chmod 0644 "$STATUS_DIR/status.json.tmp"
   mv -f "$STATUS_DIR/status.json.tmp" "$STATUS_DIR/status.json"
   exit 1
 }
@@ -93,9 +94,10 @@ rm -f "$keep.all"
 # 3. État lisible par le site (future carte « santé de l'iMac »).
 count=$(ls -1 "$TARGET/snapshots" | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{4}$' || true)
 free_pct=$(df -P "$TARGET" | awk 'END {gsub("%","",$5); print 100-$5}')
-mkdir -p "$STATUS_DIR"
+install -d -m 0755 "$STATUS_DIR"
 printf '{"ok":true,"at":"%s","latest":"%s","snapshots":%s,"freePercent":%s}\n' \
   "$NOW" "$stamp" "$count" "$free_pct" > "$STATUS_DIR/status.json.tmp"
+chmod 0644 "$STATUS_DIR/status.json.tmp"
 mv -f "$STATUS_DIR/status.json.tmp" "$STATUS_DIR/status.json"
 if [ "$free_pct" -lt "$MIN_FREE_PERCENT" ]; then
   log "ATTENTION : moins de $MIN_FREE_PERCENT % libres sur le disque de sauvegarde"

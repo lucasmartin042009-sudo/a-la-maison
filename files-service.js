@@ -52,9 +52,46 @@ async function refreshStorage(){
     field('detail').textContent='Impossible de lire le stockage. Revenez à l’accueil pour réessayer.';
   }
 }
+let healthGeneration=0;
+function healthAge(seconds){
+  const hours=Math.max(0,Math.round((Date.now()/1000-seconds)/3600));
+  return hours<1?'il y a moins d’une heure':hours<48?'il y a '+hours+' h':'il y a '+Math.round(hours/24)+' jours';
+}
+async function refreshHealth(){
+  const card=$('#health-card');
+  if(!card)return;
+  const generation=++healthGeneration;
+  const active=()=>card.isConnected&&generation===healthGeneration;
+  const status=card.querySelector('#health-status'),detail=card.querySelector('#health-detail');
+  const show=(state,text,more='')=>{status.dataset.state=state;status.lastElementChild.textContent=text;detail.textContent=more;};
+  try{
+    const session=await sessionRefresh();
+    if(!active())return;
+    if(!session.authenticated){show('inconnu','Connectez-vous pour voir son état');return;}
+    const data=await localAPI('/api/health');
+    if(!active())return;
+    const disk=(data.disks||[]).find(d=>d&&d.role==='imac'),backup=data.backup;
+    const rank={ok:0,inconnu:1,attention:2,alerte:3};
+    const words={ok:'Disque en bonne santé',attention:'Disque à surveiller',alerte:'Disque en danger : sauvegardez',inconnu:'Disque non vérifié'};
+    const diskState=disk&&words[disk.state]?disk.state:'inconnu';
+    const backupState=backup&&rank[backup.state]!==undefined?backup.state:'inconnu';
+    const worst=[diskState,backupState].sort((a,b)=>rank[b]-rank[a])[0];
+    const parts=[];
+    if(backup&&Number.isSafeInteger(backup.checkedAt))parts.push(backup.ok?'Sauvegardé '+healthAge(backup.checkedAt):'Dernière sauvegarde échouée ('+healthAge(backup.checkedAt)+')');
+    else parts.push('Aucune sauvegarde trouvée');
+    if(disk&&Number.isSafeInteger(disk.temperature))parts.push(disk.temperature+' °C');
+    if(backup&&Number.isSafeInteger(backup.freePercent))parts.push('LaCie libre à '+backup.freePercent+' %');
+    show(worst,words[diskState],parts.join(' · '));
+  }catch(error){
+    if(!active())return;
+    if(error.status===401){show('inconnu','Connectez-vous pour voir son état');return;}
+    show('inconnu','État indisponible');
+  }
+}
 const initialHome=home;
-home=function(){initialHome();void refreshStorage();};
-document.addEventListener('visibilitychange',()=>{if(!document.hidden&&route()==='home')void refreshStorage();});
+function refreshHomeCards(){return Promise.all([refreshStorage(),refreshHealth()]);}
+home=function(){initialHome();void refreshHomeCards();};
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&route()==='home')void refreshHomeCards();});
 const demoPreview=preview;
 async function localAPI(url, options={}) {
   const headers={...(options.headers||{})};
@@ -227,7 +264,7 @@ async function uploadFinderFiles(selected,target){
     }
   }finally{
     localBusy=false;
-    if(route()==='files')await filesPage();else if(route()==='home')await refreshStorage();else if(route()==='photos')await photosPage();
+    if(route()==='files')await filesPage();else if(route()==='home')await refreshHomeCards();else if(route()==='photos')await photosPage();
     if(errors.length){modal('<h2>Résultat des envois</h2><p>'+successes+' fichier(s) enregistré(s).</p><div class="preview" id="upload-errors"></div>');$('#upload-errors').textContent=errors.join('\n');}
     else toast(successes+' fichier'+(successes===1?' ajouté':'s ajoutés')+' dans '+(target.space==='private'?'Mes fichiers':'Famille')+(target.path?' / '+target.path:'')+'.');
   }
@@ -294,7 +331,7 @@ function localPassword(){
 }
 // Existing browser notes are preserved, but never displayed to another family account.
 notesPage=function(){shell(head('Notes','Ce module n’est pas encore disponible en famille')+'<section class="panel setting"><p>Les notes personnelles arriveront dans une prochaine version.</p><p class="notice">Les anciennes notes de démonstration restent conservées dans ce navigateur, sans être affichées ici.</p><a class="btn primary" href="#files">Ouvrir mes fichiers</a></section>');};
-if(route()==='home')void refreshStorage();
+if(route()==='home')void refreshHomeCards();
 else if(route()==='files')filesPage();
 else if(route()==='settings')settingsPage();
 else if(route()==='notes')notesPage();
