@@ -66,6 +66,7 @@ async function main(){
   await card('sante-'+name+'.png');console.log('ok',name,'→',t);
  }
  await page.screenshot({path:path.join(output,'sante-accueil.png')});
+ await page.getByRole('button',{name:/Bienvenue/}).click();await page.getByRole('heading',{name:'Bienvenue à la maison'}).waitFor();assert.doesNotMatch(await page.locator('#modal').innerText(),/maquette|démonstration/i);await page.locator('#modal').screenshot({path:path.join(output,'bienvenue.png')});await page.locator('#modal .modal-actions .btn').click();assert.equal(await page.locator('#modal').evaluate(m=>m.open),false);console.log('ok bienvenue');
  const mobile=await browser.newContext({viewport:{width:390,height:844},ignoreHTTPSErrors:true,reducedMotion:'reduce',storageState:await ctx.storageState()});
  const m=await mobile.newPage();await m.goto(origin+'/#home');
  await m.waitForFunction(()=>document.querySelector('#health-status')?.dataset.state==='alerte');

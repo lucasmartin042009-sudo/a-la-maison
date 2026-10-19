@@ -92,7 +92,6 @@ const initialHome=home;
 function refreshHomeCards(){return Promise.all([refreshStorage(),refreshHealth()]);}
 home=function(){initialHome();void refreshHomeCards();};
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&route()==='home')void refreshHomeCards();});
-const demoPreview=preview;
 async function localAPI(url, options={}) {
   const headers={...(options.headers||{})};
   if(options.method==='POST') headers['X-CSRF-Token']=localSession?.csrf||'';
@@ -288,7 +287,6 @@ if(result.kind==='image'){
 }else target.textContent=result.text;}catch(error){if(target.isConnected)target.textContent=error.message;}}
 function localNewFolder(){if(localBusy||finderQuery.trim()){toast('Terminez l’envoi ou effacez la recherche.');return;}const destination=localPath,space=localSpace,accountId=localSession.accountId;modal('<h2>Nouveau dossier</h2><form id="local-folder-form"><label for="local-folder-name">Nom du dossier</label><input id="local-folder-name" class="modal-input" maxlength="120" required><p class="notice">Création dans le dossier actuellement ouvert.</p><button class="btn primary">Créer le dossier</button><p id="local-folder-error" class="notice" role="alert"></p></form>');$('#local-folder-form').onsubmit=async e=>{e.preventDefault();const button=e.target.querySelector('button');button.disabled=true;try{if(localSession.accountId!==accountId)throw new Error('Le compte a changé.');await localJSON(spaceURL('folders',destination,space),{name:$('#local-folder-name').value.trim()});$('#modal').close();await filesPage();toast('Dossier créé sur votre iMac.');}catch(error){$('#local-folder-error').textContent=error.message;button.disabled=false;}};$('#local-folder-name').focus();}
 async function localLogout(){if(localBusy){toast('Attendez la fin de l’envoi.');return;}try{await localJSON('/api/logout',{});localSession=null;localPath='';localSpace='private';localEntries=[];if(typeof resetPhotos==='function')resetPhotos();resetFilesNavigation();if(route()==='files')await filesPage();else location.hash='files';toast('Vous êtes déconnecté.');}catch(error){localError(error);}}
-document.querySelector('.demo').innerHTML='<i></i> Mes fichiers · Famille · Accès privé';
 
 settingsPage=async function(){
   const generation=++localGeneration;
