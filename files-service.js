@@ -208,6 +208,97 @@ function finderPhotos(space){
   if(localBusy){toast('Attendez la fin de l’envoi.');return;}
   photoSpace=space;photoPage=0;photoQuery='';location.hash='photos';
 }
+let finderView='list';
+try{if(localStorage.getItem('alamaison.finder.view')==='grid')finderView='grid';}catch{}
+const IMAGE_EXT=/\.(jpe?g|png|webp|gif)$/i,VIDEO_EXT=/\.(mp4|m4v|mov|webm)$/i,AUDIO_EXT=/\.(mp3|m4a|aac|wav|flac|ogg|oga|opus)$/i;
+function mediaKind(name){return IMAGE_EXT.test(name)?'image':VIDEO_EXT.test(name)?'video':AUDIO_EXT.test(name)?'audio':'';}
+function finderSetView(view){
+  finderView=view==='grid'?'grid':'list';
+  try{localStorage.setItem('alamaison.finder.view',finderView);}catch{}
+  document.querySelectorAll('.finder-view [data-view]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.view===finderView)));
+  $('#finder-drop')?.classList.toggle('grid-mode',finderView==='grid');
+  void updateFinderResults(false);
+}
+function finderViewButtons(){
+  const list='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 6.5h11M8.5 12h11M8.5 17.5h11M4.5 6.5h.01M4.5 12h.01M4.5 17.5h.01"/></svg>';
+  const grid='<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.6"/></svg>';
+  return `<div class="finder-view" role="group" aria-label="Présentation"><button class="btn icon-btn" data-view="list" aria-label="Présentation en liste" aria-pressed="${finderView==='list'}" onclick="finderSetView('list')">${list}</button><button class="btn icon-btn" data-view="grid" aria-label="Présentation en grille avec aperçus" aria-pressed="${finderView==='grid'}" onclick="finderSetView('grid')">${grid}</button></div>`;
+}
+/* Vignettes vidéo : une image extraite dans le navigateur (l'iMac ne calcule rien),
+   deux à la fois au maximum, seulement pour les tuiles visibles. */
+const posterCache=new Map(),posterQueue=[];let posterActive=0;
+const posterObserver='IntersectionObserver' in window?new IntersectionObserver(items=>{
+  for(const item of items)if(item.isIntersecting){posterObserver.unobserve(item.target);posterQueue.push(item.target);}
+  pumpPosters();
+},{rootMargin:'300px'}):null;
+function formatDuration(seconds){if(!Number.isFinite(seconds)||seconds<=0)return '';const s=Math.round(seconds),h=Math.floor(s/3600),m=Math.floor(s%3600/60),r=String(s%60).padStart(2,'0');return h?h+':'+String(m).padStart(2,'0')+':'+r:m+':'+r;}
+function applyPoster(thumb,poster){
+  if(!thumb.isConnected)return;
+  const img=document.createElement('img');img.alt='';img.src=poster.src;img.className='tile-img';
+  thumb.querySelector('.tile-art')?.replaceWith(img);
+  const time=formatDuration(poster.duration);if(time)thumb.querySelector('.tile-badge').textContent='▶ '+time;
+}
+function makePoster(thumb){
+  const key=thumb.dataset.key;
+  if(posterCache.has(key)){applyPoster(thumb,posterCache.get(key));return Promise.resolve();}
+  return new Promise(resolve=>{
+    const video=document.createElement('video');video.muted=true;video.preload='metadata';video.playsInline=true;
+    let done=false;
+    const finish=poster=>{
+      if(done)return;done=true;clearTimeout(timer);
+      video.removeAttribute('src');video.load();
+      if(poster){if(posterCache.size>200){const oldest=posterCache.keys().next().value;URL.revokeObjectURL(posterCache.get(oldest).src);posterCache.delete(oldest);}posterCache.set(key,poster);applyPoster(thumb,poster);}
+      resolve();
+    };
+    const timer=setTimeout(()=>finish(null),15000);
+    video.onloadedmetadata=()=>{video.currentTime=Math.min(1,(video.duration||3)/3);};
+    video.onseeked=()=>{
+      try{
+        const width=320,height=Math.max(1,Math.round(width*(video.videoHeight||9)/(video.videoWidth||16)));
+        const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;
+        canvas.getContext('2d').drawImage(video,0,0,width,height);
+        // blob: et non data: — la politique de sécurité du site n'autorise que 'self' et blob: pour les images.
+        const duration=video.duration;
+        canvas.toBlob(blob=>finish(blob?{src:URL.createObjectURL(blob),duration}:null),'image/jpeg',.72);
+      }catch{finish(null);}
+    };
+    video.onerror=()=>finish(null);
+    video.src=thumb.dataset.src;
+  });
+}
+function pumpPosters(){
+  while(posterActive<2&&posterQueue.length){
+    const thumb=posterQueue.shift();if(!thumb.isConnected)continue;
+    posterActive++;makePoster(thumb).finally(()=>{posterActive--;pumpPosters();});
+  }
+}
+const audioArt='<svg viewBox="0 0 120 60" aria-hidden="true"><g fill="#fff">'+[18,30,22,40,28,48,34,20,42,26,36,16,30,44,24,32,18].map((h,i)=>`<rect x="${6+i*6.4}" y="${30-h/2}" width="3.4" height="${h}" rx="1.7" opacity="${.55+((i*7)%5)/10}"/>`).join('')+'</g></svg>';
+function finderTile(entry,path,space,recursive){
+  const tile=document.createElement('div');tile.className='file-tile';tile.setAttribute('role','row');
+  const kind=entry.folder?'folder':mediaKind(entry.name);
+  tile.innerHTML=`<div role="cell"><button class="tile-open"><span class="tile-thumb tile-${kind||'file'}"><span class="tile-art">${fileIcon(entry.folder,entry.name)}</span><span class="tile-badge"></span></span><span class="tile-name"></span><small class="tile-meta"></small></button></div>`;
+  const open=tile.querySelector('.tile-open'),thumb=tile.querySelector('.tile-thumb');
+  open.querySelector('.tile-name').textContent=entry.name;open.title=entry.name;
+  open.setAttribute('aria-label',(entry.folder?'Ouvrir le dossier ':'Aperçu de ')+entry.name);
+  open.onclick=()=>entry.folder?finderNavigate(space,path):localPreview(path,entry.name,space);
+  const meta=entry.folder?'Dossier':(entry.size>=1048576?(entry.size/1048576).toFixed(1)+' Mio':formatSize(entry.size));
+  open.querySelector('.tile-meta').textContent=recursive?((space==='private'?'Mes fichiers':'Famille')+(path.includes('/')?' / '+path.slice(0,path.lastIndexOf('/')):'')):meta;
+  if(kind==='image'&&entry.size<=30*1048576){
+    const img=document.createElement('img');img.alt='';img.loading='lazy';img.decoding='async';img.className='tile-img';
+    // Image ajoutée tout de suite (sinon le chargement différé ne démarre jamais), visible une fois décodée.
+    img.classList.add('pending');
+    img.onload=()=>{if(!img.naturalWidth){img.remove();return;}thumb.querySelector('.tile-art')?.remove();img.classList.remove('pending');};
+    img.onerror=()=>img.remove();
+    img.src=spaceURL('image',path,space);thumb.prepend(img);
+  }else if(kind==='video'){
+    thumb.dataset.src=spaceURL('media',path,space);thumb.dataset.key=space+'\n'+path+'\n'+entry.modified+'\n'+entry.size;
+    thumb.querySelector('.tile-badge').textContent='▶';
+    if(posterObserver)posterObserver.observe(thumb);
+  }else if(kind==='audio'){
+    thumb.querySelector('.tile-art').innerHTML=audioArt;thumb.querySelector('.tile-badge').textContent='♪';
+  }
+  return tile;
+}
 filesPage=async function(){
   cancelFinderSearch();
   const generation=++localGeneration;
@@ -220,10 +311,10 @@ filesPage=async function(){
     localEntries=result.entries;
     shell(head('Fichiers',`Connecté : ${esc(localSession.user)}`, '<a class="btn" href="#settings">Mon compte</a><button class="btn" onclick="localLogout()">Se déconnecter</button>')+
       `<section class="finder panel"><aside class="finder-sidebar"><p class="finder-label">Espaces</p><div role="group" aria-label="Choisir l’espace"><button class="finder-place ${localSpace==='private'?'active':''}" aria-pressed="${localSpace==='private'}" onclick="localSelectSpace('private')">${fileIcon(true)}<span>Mes fichiers</span></button><button class="finder-place ${localSpace==='shared'?'active':''}" aria-pressed="${localSpace==='shared'}" onclick="localSelectSpace('shared')">${fileIcon(true)}<span>Famille</span></button></div><p class="finder-label">Galeries</p><button class="finder-place" onclick="finderPhotos('private')">${fileIcon(false,'photo.jpg')}<span>Mes photos</span></button><button class="finder-place" onclick="finderPhotos('shared')">${fileIcon(false,'photo.jpg')}<span>Photos de famille</span></button></aside>`+
-      `<div class="finder-main"><div class="finder-tools"><div class="finder-arrows"><button class="btn" id="finder-back" aria-label="Retour" onclick="finderMove(-1)" ${finderIndex===0?'disabled':''}>←</button><button class="btn" id="finder-forward" aria-label="Suivant" onclick="finderMove(1)" ${finderIndex===finderHistory.length-1?'disabled':''}>→</button></div><div class="crumb" aria-label="Fil d’Ariane" id="local-crumb"></div><div class="finder-file-actions"><button class="btn" id="finder-new" onclick="localNewFolder()">+ Nouveau dossier</button><button class="btn primary" id="finder-add">Ajouter</button></div></div>`+
+      `<div class="finder-main"><div class="finder-tools"><div class="finder-arrows"><button class="btn" id="finder-back" aria-label="Retour" onclick="finderMove(-1)" ${finderIndex===0?'disabled':''}>←</button><button class="btn" id="finder-forward" aria-label="Suivant" onclick="finderMove(1)" ${finderIndex===finderHistory.length-1?'disabled':''}>→</button></div><div class="crumb" aria-label="Fil d’Ariane" id="local-crumb"></div>${finderViewButtons()}<div class="finder-file-actions"><button class="btn" id="finder-new" onclick="localNewFolder()">+ Nouveau dossier</button><button class="btn primary" id="finder-add">Ajouter</button></div></div>`+
       '<div class="finder-searchbar"><input class="search" id="local-search" type="search" placeholder="Rechercher un fichier ou dossier" aria-label="Rechercher un fichier ou dossier"><label for="finder-scope" class="sr-only">Portée de la recherche</label><select id="finder-scope" class="finder-select"><option value="folder">Ce dossier</option><option value="space">Tout cet espace</option></select></div>'+
       `<p class="notice finder-privacy">${localSpace==='private'?'Vous seul pouvez ouvrir cet espace depuis le site.':'Dossier commun : les membres peuvent consulter et ajouter des fichiers.'}</p>`+
-      '<div id="finder-drop" class="finder-drop" role="region" aria-label="Déposer des fichiers"><div id="finder-drop-overlay" aria-hidden="true"></div><div role="table" aria-label="Fichiers et dossiers"><div class="file-row file-head" role="row"><span role="columnheader" aria-label="Type"></span><span role="columnheader" data-sort="name"><button onclick="finderSetSort(\'name\')">Nom <span class="sort-arrow"></span></button></span><span class="date" role="columnheader" data-sort="date"><button onclick="finderSetSort(\'date\')">Date <span class="sort-arrow"></span></button></span><span role="columnheader" data-sort="size"><button onclick="finderSetSort(\'size\')">Taille <span class="sort-arrow"></span></button></span><span role="columnheader" aria-label="Actions"></span></div><div id="local-rows" role="rowgroup"></div></div></div>'+
+      '<div id="finder-drop" class="finder-drop'+(finderView==='grid'?' grid-mode':'')+'" role="region" aria-label="Déposer des fichiers"><div id="finder-drop-overlay" aria-hidden="true"></div><div role="table" aria-label="Fichiers et dossiers"><div class="file-row file-head" role="row"><span role="columnheader" aria-label="Type"></span><span role="columnheader" data-sort="name"><button onclick="finderSetSort(\'name\')">Nom <span class="sort-arrow"></span></button></span><span class="date" role="columnheader" data-sort="date"><button onclick="finderSetSort(\'date\')">Date <span class="sort-arrow"></span></button></span><span role="columnheader" data-sort="size"><button onclick="finderSetSort(\'size\')">Taille <span class="sort-arrow"></span></button></span><span role="columnheader" aria-label="Actions"></span></div><div id="local-rows" role="rowgroup"></div></div></div>'+
       '<div class="finder-footer"><span id="finder-status" role="status"></span><span id="finder-destination"></span></div></div></section><p class="notice">Glissez des fichiers dans la liste pour les ajouter, ou utilisez Ajouter. '+Math.round(localSession.maxUpload/1024/1024)+' Mio maximum par fichier. Les fichiers existants ne sont jamais remplacés.</p>');
     const crumb=$('#local-crumb');
     const addCrumb=(label,path)=>{const button=document.createElement('button');button.textContent=label;button.onclick=()=>localOpen(path);crumb.append(button);};
@@ -281,11 +372,13 @@ function localRows(query,entries=localEntries,recursive=false,partial=false){
   $('#finder-status').textContent=partial?'Résultats partiels : '+filtered.length+' élément(s). Précisez la recherche ou ouvrez un dossier.':filtered.length+' élément'+(filtered.length===1?'':'s')+(recursive?' trouvé'+(filtered.length===1?'':'s'):'');
   if(!filtered.length){const empty=document.createElement('div');empty.className='empty';empty.textContent=query||recursive?'Aucun résultat'+(partial?' parmi les éléments parcourus.':'.'):'Ce dossier est vide. Déposez vos premiers fichiers ici.';rows.append(empty);return;}
   const space=localSpace;
+  rows.classList.toggle('file-grid',finderView==='grid');
   for(const entry of filtered){
     const path=recursive?entry.path:(localPath?localPath+'/':'')+entry.name;
+    if(finderView==='grid'){rows.append(finderTile(entry,path,space,recursive));continue;}
     const row=document.createElement('div');row.className='file-row';row.setAttribute('role','row');
     row.innerHTML=`<span role="cell">${fileIcon(entry.folder,entry.name)}</span><div class="finder-name-cell" role="cell"><button class="file-name"></button></div><small class="date" role="cell"></small><small class="size" role="cell"></small><span role="cell" class="finder-download-cell"></span>`;
-    const button=row.querySelector('.file-name');button.textContent=entry.name;button.title=entry.name;button.onclick=()=>entry.folder?finderNavigate(space,path):localPreview(path,entry.name);
+    const button=row.querySelector('.file-name');button.textContent=entry.name;button.title=entry.name;button.onclick=()=>entry.folder?finderNavigate(space,path):localPreview(path,entry.name,space);
     if(recursive){
       const parent=path.includes('/')?path.slice(0,path.lastIndexOf('/')):'';
       const location=document.createElement('button');location.className='finder-location';location.textContent=(space==='private'?'Mes fichiers':'Famille')+(parent?' / '+parent:'');location.setAttribute('aria-label','Ouvrir le dossier de '+entry.name);location.onclick=()=>finderNavigate(space,parent);row.querySelector('.finder-name-cell').append(location);
@@ -345,7 +438,7 @@ $('#picker').onchange=event=>{
 
 function localLogin(){const setup=localSession.setup;shell(head('Fichiers',setup?'Créez votre accès personnel':'Connectez-vous à votre espace')+`<section class="panel setting login-card"><h2>${setup?'Bienvenue à la maison':'Connexion'}</h2><form id="local-login"><label for="local-user">Identifiant</label><input class="modal-input" id="local-user" autocomplete="username" required maxlength="64"><label for="local-password">Mot de passe ${setup?'(12 caractères minimum)':''}</label><input class="modal-input" id="local-password" type="password" autocomplete="${setup?'new-password':'current-password'}" minlength="12" maxlength="128" required><label class="remember-choice" for="local-remember"><input id="local-remember" type="checkbox"><span>Se souvenir de moi pendant 30 jours</span></label><p class="notice remember-help">À activer uniquement sur votre appareil personnel.</p><button class="btn primary" id="local-submit">${setup?'Créer mon accès':'Se connecter'}</button><p id="login-error" class="notice" role="alert"></p></form></section>${localLabel()}<p class="notice">Accès privé et chiffré via Tailscale.</p>`);$('#local-login').onsubmit=async e=>{e.preventDefault();const button=$('#local-submit');button.disabled=true;const password=$('#local-password').value;try{await localJSON(setup?'/api/setup':'/api/login',{user:$('#local-user').value.trim(),password,remember:$('#local-remember').checked});$('#local-password').value='';await filesPage();}catch(error){$('#local-password').value='';$('#login-error').textContent=error.message;button.disabled=false;}};}
 function localDownload(path,space=localSpace){const a=document.createElement('a');a.href=spaceURL('download',path,space);a.download=path.split('/').pop();document.body.append(a);a.click();a.remove();}
-async function localPreview(path,name){const space=localSpace;modal(`<h2>${esc(name)}</h2><div class="preview" id="local-preview" role="status">Ouverture…</div><div class="modal-actions"><span class="notice">Fichier conservé sur votre iMac</span><button class="btn primary" id="local-download">Télécharger</button></div>`);const target=$('#local-preview');$('#local-download').onclick=()=>localDownload(path,space);try{const result=await localAPI(spaceURL('preview',path,space));if(!target.isConnected)return;
+async function localPreview(path,name,space=localSpace){modal(`<h2>${esc(name)}</h2><div class="preview" id="local-preview" role="status">Ouverture…</div><div class="modal-actions"><span class="notice">Fichier conservé sur votre iMac</span><button class="btn primary" id="local-download">Télécharger</button></div>`);const target=$('#local-preview');$('#local-download').onclick=()=>localDownload(path,space);try{const result=await localAPI(spaceURL('preview',path,space));if(!target.isConnected)return;
 if(result.kind==='image'){
   target.textContent='Chargement de l’image…';
   const image=document.createElement('img');
@@ -354,7 +447,22 @@ if(result.kind==='image'){
   image.onload=()=>{if(!target.isConnected)return;if(!image.naturalWidth){target.textContent='Cette image ne peut pas être décodée. Vous pouvez télécharger l’original.';return;}target.replaceChildren(image);target.style.padding='0';target.style.background='transparent';target.style.maxHeight='none';};
   image.onerror=()=>{if(target.isConnected)target.textContent='Impossible d’afficher cette image : fichier invalide, connexion interrompue ou session expirée. Rechargez la page ou téléchargez l’original.';};
   image.src=spaceURL('image',path,space);
+}else if(result.kind==='video'||result.kind==='audio'){
+  const player=document.createElement(result.kind);
+  player.controls=true;player.preload='metadata';player.className='preview-'+result.kind;
+  player.setAttribute('aria-label','Lecture de '+name);
+  if(result.kind==='video')player.playsInline=true;
+  player.onerror=()=>{if(target.isConnected){target.className='preview';target.textContent='Ce navigateur ne sait pas lire ce fichier (format ou codec non pris en charge, par exemple ProRes). Téléchargez l’original pour l’ouvrir sur votre ordinateur.';}};
+  player.src=spaceURL('media',path,space);
+  target.className='preview media-preview';target.removeAttribute('role');
+  if(result.kind==='audio'){
+    const card=document.createElement('div');card.className='audio-card';
+    card.innerHTML=`<div class="audio-art">${audioArt}</div><div class="audio-title"></div>`;
+    card.querySelector('.audio-title').textContent=name;card.append(player);target.replaceChildren(card);
+  }else target.replaceChildren(player);
+  player.play().catch(()=>{});
 }else target.textContent=result.text;}catch(error){if(target.isConnected)target.textContent=error.message;}}
+$('#modal').addEventListener('close',()=>{for(const media of $('#modal').querySelectorAll('video,audio')){media.pause();media.removeAttribute('src');media.load();}});
 function localNewFolder(){if(localBusy||finderQuery.trim()){toast('Terminez l’envoi ou effacez la recherche.');return;}const destination=localPath,space=localSpace,accountId=localSession.accountId;modal('<h2>Nouveau dossier</h2><form id="local-folder-form"><label for="local-folder-name">Nom du dossier</label><input id="local-folder-name" class="modal-input" maxlength="120" required><p class="notice">Création dans le dossier actuellement ouvert.</p><button class="btn primary">Créer le dossier</button><p id="local-folder-error" class="notice" role="alert"></p></form>');$('#local-folder-form').onsubmit=async e=>{e.preventDefault();const button=e.target.querySelector('button');button.disabled=true;try{if(localSession.accountId!==accountId)throw new Error('Le compte a changé.');await localJSON(spaceURL('folders',destination,space),{name:$('#local-folder-name').value.trim()});$('#modal').close();await filesPage();toast('Dossier créé sur votre iMac.');}catch(error){$('#local-folder-error').textContent=error.message;button.disabled=false;}};$('#local-folder-name').focus();}
 async function localLogout(){if(localBusy){toast('Attendez la fin de l’envoi.');return;}try{await localJSON('/api/logout',{});localSession=null;localPath='';localSpace='private';localEntries=[];if(typeof resetPhotos==='function')resetPhotos();resetFilesNavigation();if(route()==='files')await filesPage();else location.hash='files';toast('Vous êtes déconnecté.');}catch(error){localError(error);}}
 

@@ -15,9 +15,10 @@ const fileGlyphs={
   image:'<rect x="4" y="5" width="16" height="14" rx="3" fill="#fff" opacity=".45"/><circle cx="15" cy="9.5" r="1.8" fill="#fff"/><path d="M4 16 9 11l4 4 2.5-2.5L20 17a2.5 2.5 0 0 1-2.5 2h-11A2.5 2.5 0 0 1 4 16.5z" fill="#fff"/>',
   doc:'<path d="M7.5 3h6.5l5 5v11a2 2 0 0 1-2 2H7.5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" fill="#fff"/><path class="fi-ink" d="M8.8 12h6.4M8.8 15h6.4M8.8 18h3.8" stroke-width="1.4" stroke-linecap="round"/>',
   video:'<rect x="3" y="6.5" width="13" height="11" rx="3" fill="#fff"/><path d="m17 10.5 4-2.5v8l-4-2.5z" fill="#fff" opacity=".75"/>',
+  audio:'<path d="M9.5 17.5V6.8l9-2.3v10.7" fill="none" stroke="#fff" stroke-width="1.9" stroke-linejoin="round"/><circle cx="7.3" cy="17.6" r="2.6" fill="#fff"/><circle cx="16.3" cy="15.3" r="2.6" fill="#fff"/>',
   file:'<path d="M7.5 3h6.5l5 5v11a2 2 0 0 1-2 2H7.5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" fill="#fff"/><path class="fi-ink" d="M14 3v5h5" fill="none" stroke-width="1.4"/>'
 };
-function fileIcon(folder,name=''){const ext=String(name).split('.').pop().toLowerCase();const kind=folder?'folder':/^(jpe?g|png|gif|webp|heic|heif|raw|dng|cr2|cr3|nef|arw|raf|orf|rw2|svg)$/.test(ext)?'image':/^(txt|md|rtf|docx?|pdf|pages|odt|csv)$/.test(ext)?'doc':/^(mp4|mov|m4v|avi|mkv|webm)$/.test(ext)?'video':'file';return `<span class="ficon ficon-${kind}" aria-hidden="true"><svg viewBox="0 0 24 24">${fileGlyphs[kind]}</svg></span>`;}
+function fileIcon(folder,name=''){const ext=String(name).split('.').pop().toLowerCase();const kind=folder?'folder':/^(jpe?g|png|gif|webp|heic|heif|raw|dng|cr2|cr3|nef|arw|raf|orf|rw2|svg)$/.test(ext)?'image':/^(txt|md|rtf|docx?|pdf|pages|odt|csv)$/.test(ext)?'doc':/^(mp4|mov|m4v|avi|mkv|webm)$/.test(ext)?'video':/^(mp3|m4a|aac|wav|flac|ogg|oga|opus|aiff?)$/.test(ext)?'audio':'file';return `<span class="ficon ficon-${kind}" aria-hidden="true"><svg viewBox="0 0 24 24">${fileGlyphs[kind]}</svg></span>`;}
 const D=s=>`style="--d:${s}s"`;
 let lastRoute=null;
 function toast(message){$('#toast').textContent=message;$('#toast').classList.add('show');clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('#toast').classList.remove('show'),4500);}

@@ -152,6 +152,32 @@ def search_files(service, account, space, query):
             partial = True
     return found, partial
 
+MEDIA_TYPES = {
+    '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.wav': 'audio/wav',
+    '.flac': 'audio/flac', '.ogg': 'audio/ogg', '.oga': 'audio/ogg', '.opus': 'audio/ogg',
+    '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm',
+}
+
+
+def media_type(name, header):
+    """Audio/vidéo lisible par le navigateur : extension connue ET signature cohérente."""
+    mime = MEDIA_TYPES.get(Path(name).suffix.lower())
+    if not mime or len(header) < 12:
+        return None
+    iso = header[4:8] in (b'ftyp', b'moov', b'mdat', b'free', b'wide', b'skip')
+    mpeg = header[0] == 0xFF and header[1] & 0xE0 == 0xE0
+    valid = {
+        'audio/mpeg': header[:3] == b'ID3' or mpeg,
+        'audio/mp4': iso, 'video/mp4': iso, 'video/quicktime': iso,
+        'audio/aac': header[:3] == b'ID3' or (header[0] == 0xFF and header[1] & 0xF6 == 0xF0),
+        'audio/wav': header[:4] == b'RIFF' and header[8:12] == b'WAVE',
+        'audio/flac': header[:4] == b'fLaC' or header[:3] == b'ID3',
+        'audio/ogg': header[:4] == b'OggS',
+        'video/webm': header[:4] == b'\x1aE\xdf\xa3',
+    }[mime]
+    return mime if valid else None
+
+
 def image_type(header):
     """Allow only passive raster formats recognized by their byte signature."""
     if header.startswith(b'\xff\xd8\xff'):
@@ -617,7 +643,7 @@ class Handler(BaseHTTPRequestHandler):
             entries.sort(key=lambda e: (not e['folder'], e['name'].casefold()))
             self.reply(200, {'entries': entries, 'path': path})
             return
-        if endpoint in ('/api/download', '/api/preview', '/api/image'):
+        if endpoint in ('/api/download', '/api/preview', '/api/image', '/api/media'):
             components = parts(path)
             if not components:
                 raise Fault(400, 'Choisissez un fichier.')
@@ -630,6 +656,16 @@ class Handler(BaseHTTPRequestHandler):
                 header = stream.read(32)
                 stream.seek(0)
                 mime = image_type(header)
+                media = media_type(components[-1], header)
+                if endpoint == '/api/media':
+                    if not media:
+                        raise Fault(415, 'Lecture disponible pour MP3, M4A, AAC, WAV, FLAC, OGG, MP4, MOV et WebM.')
+                    self.send_ranged(stream, info.st_size, media,
+                                     disposition="inline; filename*=UTF-8''" + quote(components[-1], safe=''))
+                    return
+                if endpoint == '/api/preview' and media:
+                    self.reply(200, {'kind': media.split('/')[0], 'mime': media})
+                    return
                 if endpoint == '/api/image' and not mime:
                     raise Fault(415, 'Aperçu image disponible pour JPEG, PNG, WebP et GIF uniquement.')
                 if endpoint == '/api/preview' and mime:
@@ -746,54 +782,59 @@ class Handler(BaseHTTPRequestHandler):
             info = os.fstat(stream.fileno())
             if not stat.S_ISREG(info.st_mode):
                 raise Fault(404, 'Ressource introuvable.')
-            size = info.st_size
-            start, end, status = 0, size - 1, 200
-            # A single byte range is sufficient for Safari video playback.
-            # HEAD ignores Range per HTTP semantics; no full video read into RAM.
-            ranges = self.headers.get_all('Range', []) if self.command == 'GET' else []
-            if ranges:
-                match = re.fullmatch(r'bytes=([0-9]*)-([0-9]*)', ranges[0]) if len(ranges) == 1 and len(ranges[0]) <= 100 else None
-                try:
-                    if not match or size == 0:
-                        raise ValueError()
-                    first, last = match.groups()
-                    if first:
-                        start = int(first)
-                        end = min(int(last), size - 1) if last else size - 1
-                    else:
-                        suffix = int(last)
-                        if suffix <= 0:
-                            raise ValueError()
-                        start = max(0, size - suffix)
-                    if start >= size or start > end:
-                        raise ValueError()
-                    status = 206
-                except ValueError:
-                    self.send_response(416)
-                    self.send_header('Content-Range', f'bytes */{size}')
-                    self.send_header('Content-Length', '0')
-                    self.security_headers()
-                    self.end_headers()
-                    return
-            self.send_response(status)
-            self.send_header('Content-Type', mime)
-            self.send_header('Content-Length', str(end - start + 1))
-            self.send_header('Accept-Ranges', 'bytes')
-            if status == 206:
-                self.send_header('Content-Range', f'bytes {start}-{end}/{size}')
             # Only decorative media are cacheable. Files, sessions and stats never are.
-            self.security_headers('private, max-age=3600' if endpoint in WALLPAPER else 'no-store')
-            self.end_headers()
-            if self.command == 'HEAD':
+            self.send_ranged(stream, info.st_size, mime, 'private, max-age=3600' if endpoint in WALLPAPER else 'no-store')
+
+    def send_ranged(self, stream, size, mime, cache='no-store', disposition=None):
+        """Envoie un fichier ouvert, entier ou par plage (une seule) pour la lecture audio/vidéo."""
+        start, end, status = 0, size - 1, 200
+        # A single byte range is sufficient for Safari video playback.
+        # HEAD ignores Range per HTTP semantics; no full video read into RAM.
+        ranges = self.headers.get_all('Range', []) if self.command == 'GET' else []
+        if ranges:
+            match = re.fullmatch(r'bytes=([0-9]*)-([0-9]*)', ranges[0]) if len(ranges) == 1 and len(ranges[0]) <= 100 else None
+            try:
+                if not match or size == 0:
+                    raise ValueError()
+                first, last = match.groups()
+                if first:
+                    start = int(first)
+                    end = min(int(last), size - 1) if last else size - 1
+                else:
+                    suffix = int(last)
+                    if suffix <= 0:
+                        raise ValueError()
+                    start = max(0, size - suffix)
+                if start >= size or start > end:
+                    raise ValueError()
+                status = 206
+            except ValueError:
+                self.send_response(416)
+                self.send_header('Content-Range', f'bytes */{size}')
+                self.send_header('Content-Length', '0')
+                self.security_headers()
+                self.end_headers()
                 return
-            stream.seek(start)
-            remaining = end - start + 1
-            while remaining:
-                chunk = stream.read(min(65536, remaining))
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
-                remaining -= len(chunk)
+        self.send_response(status)
+        self.send_header('Content-Type', mime)
+        self.send_header('Content-Length', str(end - start + 1))
+        self.send_header('Accept-Ranges', 'bytes')
+        if disposition:
+            self.send_header('Content-Disposition', disposition)
+        if status == 206:
+            self.send_header('Content-Range', f'bytes {start}-{end}/{size}')
+        self.security_headers(cache)
+        self.end_headers()
+        if self.command == 'HEAD':
+            return
+        stream.seek(start)
+        remaining = end - start + 1
+        while remaining:
+            chunk = stream.read(min(65536, remaining))
+            if not chunk:
+                break
+            self.wfile.write(chunk)
+            remaining -= len(chunk)
 
     def post(self, endpoint, path, query):
         if endpoint in ('/api/setup', '/api/login'):
