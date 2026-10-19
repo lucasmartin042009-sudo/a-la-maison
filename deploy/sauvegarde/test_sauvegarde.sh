@@ -32,6 +32,9 @@ if run "2026-10-03 03:15"; then no "source manquante acceptée"; fi
 [ "$(readlink "$t/disque/latest")" = snapshots/2026-10-02_0315 ] && grep -q '"ok":false' "$t/etat/status.json" && ok "source manquante : échec signalé, latest intact" || no "source manquante"
 mv "$t/src/famille-x" "$t/src/famille"
 
+mkdir -p "$t/disque/snapshots/2026-10-02_0400.partiel/vieux"
+run "2026-10-02 05:00" || no "après interruption"
+[ ! -e "$t/disque/snapshots/2026-10-02_0400.partiel" ] && ok "sauvegarde interrompue nettoyée au passage suivant" || no "partiel"
 i=3; while [ $i -le 400 ]; do run "$(date -d "2026-10-01 +$i day" '+%Y-%m-%d 03:15')" || no "jour $i"; i=$((i+1)); done
 n=$(ls "$t/disque/snapshots" | wc -l)
 [ "$n" -le 34 ] && [ "$n" -ge 25 ] && ok "rotation sur 400 nuits : $n instantanés gardés" || no "rotation ($n) : $(ls "$t/disque/snapshots" | tr '\n' ' ')"

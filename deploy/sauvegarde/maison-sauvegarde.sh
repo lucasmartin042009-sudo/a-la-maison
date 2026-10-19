@@ -35,6 +35,14 @@ mkdir -p "$TARGET/snapshots"
 exec 9>"$TARGET/.verrou"
 flock -n 9 || fail "une sauvegarde est déjà en cours"
 
+# Une sauvegarde interrompue (Ctrl+C, coupure) laisse un dossier .partiel : on le
+# supprime ici, sous verrou, pour qu'il ne prenne pas de place indéfiniment.
+for old in "$TARGET"/snapshots/*.partiel; do
+  [ -e "$old" ] || continue
+  log "Suppression d'une sauvegarde interrompue : $(basename "$old")"
+  rm -rf "$old"
+done
+
 for src in $SOURCES; do
   [ -e "$src" ] || fail "source introuvable : $src"
 done
