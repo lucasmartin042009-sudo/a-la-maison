@@ -67,11 +67,47 @@ async function main(){
  }
  await page.screenshot({path:path.join(output,'sante-accueil.png')});
  await page.getByRole('button',{name:/Bienvenue/}).click();await page.getByRole('heading',{name:'Bienvenue à la maison'}).waitFor();assert.doesNotMatch(await page.locator('#modal').innerText(),/maquette|démonstration/i);await page.locator('#modal').screenshot({path:path.join(output,'bienvenue.png')});await page.locator('#modal .modal-actions .btn').click();assert.equal(await page.locator('#modal').evaluate(m=>m.open),false);console.log('ok bienvenue');
+ // Menu de profil
+ write('status.json',{ok:true,snapshots:3,freePercent:97},5);write('sante.json',disk({}));
+ await page.goto(origin+'/#home');
+ await page.locator('#avatar').click();
+ const menu=page.locator('#profile-menu');
+ await menu.getByText('Lucas-test').waitFor();
+ await page.waitForFunction(()=>document.querySelector('#profile-menu .profile-health .status')?.dataset.state==='ok');
+ assert.equal(await page.locator('#avatar').getAttribute('aria-expanded'),'true');
+ assert.match(await menu.innerText(),/Propriétaire[\s\S]*Disque en bonne santé[\s\S]*Sauvegardé il y a 5 h[\s\S]*Mon compte et réglages[\s\S]*Se déconnecter/);
+ assert.equal(await page.evaluate(()=>document.activeElement?.closest('#profile-menu')!==null),true,'focus dans le menu');
+ await page.screenshot({path:path.join(output,'profil-menu.png'),clip:{x:900,y:0,width:540,height:560}});
+ await page.keyboard.press('Escape');
+ assert.equal(await menu.isHidden(),true);
+ assert.equal(await page.evaluate(()=>document.activeElement?.id),'avatar','focus rendu à l’avatar');
+ await page.locator('#avatar').click();await menu.getByText('Lucas-test').waitFor();
+ await page.mouse.click(200,600);assert.equal(await menu.isHidden(),true,'clic extérieur ferme');
+ await page.locator('#avatar').click();
+ await menu.getByRole('menuitem',{name:'Mon compte et réglages'}).click();
+ await page.waitForURL(/#settings$/);
+ // Réglages : santé détaillée
+ const panel=page.locator('#health-panel');
+ await page.waitForFunction(()=>document.querySelector('#health-panel')?.getAttribute('aria-busy')==='false');
+ const ptext=(await panel.innerText()).replace(/\s+/g,' ');
+ assert.match(ptext,/Disque de l’iMac · Bonne santé.*Température 43 °C.*Heures de fonctionnement 12.548 h.*Sauvegarde de nuit · À jour.*Versions conservées 3/,ptext);
+ await panel.screenshot({path:path.join(output,'reglages-sante.png')});
+ console.log('ok profil + réglages →',ptext.slice(0,140));
  const mobile=await browser.newContext({viewport:{width:390,height:844},ignoreHTTPSErrors:true,reducedMotion:'reduce',storageState:await ctx.storageState()});
  const m=await mobile.newPage();await m.goto(origin+'/#home');
- await m.waitForFunction(()=>document.querySelector('#health-status')?.dataset.state==='alerte');
+ await m.waitForFunction(()=>document.querySelector('#health-status')?.dataset.state==='ok');
  const overflow=await m.evaluate(()=>document.documentElement.scrollWidth>innerWidth);assert.equal(overflow,false,'débordement mobile');
  await m.locator('#health-card').scrollIntoViewIfNeeded();await m.screenshot({path:path.join(output,'sante-mobile.png')});
+ await m.evaluate(()=>scrollTo(0,0));
+ assert(await m.locator('#avatar').isVisible(),'avatar visible sur mobile');
+ await m.locator('#avatar').click();await m.locator('#profile-menu').getByText('Lucas-test').waitFor();
+ const box=await m.locator('#profile-menu').boundingBox();assert(box.x>=0&&box.x+box.width<=390,'menu dans l’écran');
+ await m.waitForTimeout(400);await m.screenshot({path:path.join(output,'profil-mobile.png')});
+ await m.locator('#profile-menu').getByRole('menuitem',{name:'Se déconnecter'}).click();
+ await m.getByText('Vous êtes déconnecté.').waitFor();
+ await m.locator('#avatar').click();await m.locator('#profile-menu').getByText('Non connecté').waitFor();
+ assert.equal(await m.locator('#profile-menu').getByRole('menuitem',{name:'Se connecter'}).count(),1);
+ console.log('ok profil mobile + déconnexion');
  assert.deepEqual(errors,[]);console.log('Carte santé : tous les parcours passent.');
 }
 main().catch(e=>{console.error(e);process.exitCode=1;}).finally(async()=>{if(browser)await browser.close();if(proxy)proxy.close();python.stdin.end();fs.rmSync(health,{recursive:true,force:true});if(certificateDir)fs.rmSync(certificateDir,{recursive:true,force:true});});

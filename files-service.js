@@ -57,6 +57,21 @@ function healthAge(seconds){
   const hours=Math.max(0,Math.round((Date.now()/1000-seconds)/3600));
   return hours<1?'il y a moins d’une heure':hours<48?'il y a '+hours+' h':'il y a '+Math.round(hours/24)+' jours';
 }
+const healthRank={ok:0,inconnu:1,attention:2,alerte:3};
+const healthWords={ok:'Disque en bonne santé',attention:'Disque à surveiller',alerte:'Disque en danger : sauvegardez',inconnu:'Disque non vérifié'};
+function healthState(value){return healthRank[value]!==undefined?value:'inconnu';}
+// Résumé commun à la carte d'accueil, au menu de profil et aux Réglages.
+function healthSummary(data){
+  const disk=(data?.disks||[]).find(d=>d&&d.role==='imac'),backup=data?.backup;
+  const diskState=disk?healthState(disk.state):'inconnu',backupState=backup?healthState(backup.state):'inconnu';
+  const state=[diskState,backupState].sort((a,b)=>healthRank[b]-healthRank[a])[0];
+  const parts=[];
+  if(backup&&Number.isSafeInteger(backup.checkedAt))parts.push(backup.ok?'Sauvegardé '+healthAge(backup.checkedAt):'Dernière sauvegarde échouée ('+healthAge(backup.checkedAt)+')');
+  else parts.push('Aucune sauvegarde trouvée');
+  if(disk&&Number.isSafeInteger(disk.temperature))parts.push(disk.temperature+' °C');
+  if(backup&&Number.isSafeInteger(backup.freePercent))parts.push('LaCie libre à '+backup.freePercent+' %');
+  return {state,title:healthWords[diskState],detail:parts.join(' · ')};
+}
 async function refreshHealth(){
   const card=$('#health-card');
   if(!card)return;
@@ -70,24 +85,79 @@ async function refreshHealth(){
     if(!session.authenticated){show('inconnu','Connectez-vous pour voir son état');return;}
     const data=await localAPI('/api/health');
     if(!active())return;
-    const disk=(data.disks||[]).find(d=>d&&d.role==='imac'),backup=data.backup;
-    const rank={ok:0,inconnu:1,attention:2,alerte:3};
-    const words={ok:'Disque en bonne santé',attention:'Disque à surveiller',alerte:'Disque en danger : sauvegardez',inconnu:'Disque non vérifié'};
-    const diskState=disk&&words[disk.state]?disk.state:'inconnu';
-    const backupState=backup&&rank[backup.state]!==undefined?backup.state:'inconnu';
-    const worst=[diskState,backupState].sort((a,b)=>rank[b]-rank[a])[0];
-    const parts=[];
-    if(backup&&Number.isSafeInteger(backup.checkedAt))parts.push(backup.ok?'Sauvegardé '+healthAge(backup.checkedAt):'Dernière sauvegarde échouée ('+healthAge(backup.checkedAt)+')');
-    else parts.push('Aucune sauvegarde trouvée');
-    if(disk&&Number.isSafeInteger(disk.temperature))parts.push(disk.temperature+' °C');
-    if(backup&&Number.isSafeInteger(backup.freePercent))parts.push('LaCie libre à '+backup.freePercent+' %');
-    show(worst,words[diskState],parts.join(' · '));
+    const summary=healthSummary(data);
+    show(summary.state,summary.title,summary.detail);
   }catch(error){
     if(!active())return;
     if(error.status===401){show('inconnu','Connectez-vous pour voir son état');return;}
     show('inconnu','État indisponible');
   }
 }
+/* Menu de profil (avatar en haut à droite) */
+function profileMenuOpen(){return !$('#profile-menu').hidden;}
+function closeProfileMenu(focus=false){
+  const menu=$('#profile-menu'),button=$('#avatar');
+  if(!menu||menu.hidden)return;
+  menu.hidden=true;button.setAttribute('aria-expanded','false');
+  if(focus)button.focus();
+}
+function profileItem(label,action,icon,extra=''){return `<button type="button" role="menuitem" class="profile-item${extra}" data-action="${action}"><span class="pi-icon" aria-hidden="true">${icon}</span><span>${label}</span></button>`;}
+const profileIcons={
+  account:'<svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.6"/><path d="M5 19.5c1.3-3.4 4-5 7-5s5.7 1.6 7 5"/></svg>',
+  files:'<svg viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>',
+  key:'<svg viewBox="0 0 24 24"><circle cx="8" cy="12" r="3.5"/><path d="M11.5 12H20M17 12v3M20 12v2"/></svg>',
+  wall:'<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="3"/><path d="m3.5 15 5-4.5 4 3.5 3-2.5 5 4"/></svg>',
+  out:'<svg viewBox="0 0 24 24"><path d="M14 5h3.5a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H14M10 8l-4 4 4 4M6 12h9"/></svg>',
+  login:'<svg viewBox="0 0 24 24"><path d="M10 5H6.5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2H10M14 8l4 4-4 4M18 12H9"/></svg>'};
+let profileGeneration=0;
+async function openProfileMenu(){
+  const menu=$('#profile-menu'),button=$('#avatar'),generation=++profileGeneration;
+  const wall=$('#wall-toggle'),video=$('#wall-video');
+  const wallItem=wall&&!wall.hidden?profileItem(video&&!video.paused?'Mettre le fond en pause':'Animer le fond','wall',profileIcons.wall):'';
+  const session=localSession;
+  if(session?.authenticated){
+    menu.innerHTML=`<div class="profile-head"><span class="profile-badge" aria-hidden="true">${esc(Array.from(session.user)[0].toUpperCase())}</span><div><strong>${esc(session.user)}</strong><small>${session.role==='admin'?'Propriétaire':'Membre de la famille'}</small></div></div>
+<a class="profile-health" href="#settings" role="menuitem" data-action="health"><span class="status" data-state="inconnu"><i></i><span>Vérification de l’iMac…</span></span><span class="status-detail"></span></a>
+<div class="profile-sep" role="separator"></div>${profileItem('Mon compte et réglages','settings',profileIcons.account)}${profileItem('Mes fichiers','files',profileIcons.files)}${profileItem('Changer mon mot de passe','password',profileIcons.key)}${wallItem}<div class="profile-sep" role="separator"></div>${profileItem('Se déconnecter','logout',profileIcons.out,' danger')}`;
+  }else{
+    menu.innerHTML=`<div class="profile-head"><span class="profile-badge" aria-hidden="true">•</span><div><strong>Non connecté</strong><small>Connectez-vous pour retrouver vos fichiers</small></div></div><div class="profile-sep" role="separator"></div>${profileItem('Se connecter','login',profileIcons.login)}${wallItem}`;
+  }
+  menu.hidden=false;button.setAttribute('aria-expanded','true');
+  menu.querySelector('[role=menuitem]')?.focus();
+  if(!session?.authenticated)return;
+  const health=menu.querySelector('.profile-health');
+  try{
+    const summary=healthSummary(await localAPI('/api/health'));
+    if(generation!==profileGeneration||menu.hidden)return;
+    health.querySelector('.status').dataset.state=summary.state;
+    health.querySelector('.status').lastElementChild.textContent=summary.title;
+    health.querySelector('.status-detail').textContent=summary.detail;
+  }catch{if(generation===profileGeneration)health.querySelector('.status').lastElementChild.textContent='État indisponible';}
+}
+function setupProfileMenu(){
+  const button=$('#avatar'),menu=$('#profile-menu');
+  if(!button||!menu)return;
+  button.onclick=async event=>{event.stopPropagation();if(profileMenuOpen()){closeProfileMenu();return;}try{await sessionRefresh();}catch{}void openProfileMenu();};
+  menu.onclick=event=>{
+    const item=event.target.closest('[data-action]');if(!item)return;
+    const action=item.dataset.action;closeProfileMenu();
+    if(action==='settings'||action==='health'){event.preventDefault();location.hash='settings';}
+    else if(action==='files'){localSpace='private';localPath='';location.hash='files';}
+    else if(action==='login')location.hash='files';
+    else if(action==='password')localPassword();
+    else if(action==='wall')$('#wall-toggle')?.click();
+    else if(action==='logout')void localLogout();
+  };
+  menu.onkeydown=event=>{
+    const items=[...menu.querySelectorAll('[role=menuitem]')],index=items.indexOf(document.activeElement);
+    if(event.key==='Escape'){event.preventDefault();closeProfileMenu(true);}
+    else if(event.key==='ArrowDown'||event.key==='ArrowUp'){event.preventDefault();const next=items[(index+(event.key==='ArrowDown'?1:-1)+items.length)%items.length];next?.focus();}
+    else if(event.key==='Tab')closeProfileMenu();
+  };
+  document.addEventListener('click',event=>{if(profileMenuOpen()&&!menu.contains(event.target))closeProfileMenu();});
+  window.addEventListener('hashchange',()=>closeProfileMenu());
+}
+setupProfileMenu();
 const initialHome=home;
 function refreshHomeCards(){return Promise.all([refreshStorage(),refreshHealth()]);}
 home=function(){initialHome();void refreshHomeCards();};
@@ -300,7 +370,9 @@ settingsPage=async function(){
     if(route()!=='settings'||generation!==localGeneration)return;
     shell(head('Réglages',`Connecté : ${esc(localSession.user)}`,`<button class="btn" onclick="localLogout()">Se déconnecter</button>`)+
       `<div class="settings-grid"><section class="panel setting"><h2>Mon compte</h2><dl><div><dt>Identifiant</dt><dd>${esc(localSession.user)}</dd></div><div><dt>Rôle</dt><dd>${localSession.role==='admin'?'Propriétaire':'Membre'}</dd></div></dl><p class="notice">Un mot de passe propre à votre compte. Le changer déconnecte vos sessions ouvertes.</p><button class="btn" onclick="localPassword()">Changer mon mot de passe</button></section><section class="panel setting"><h2>Vos deux espaces</h2><p><strong>Mes fichiers</strong> : votre dossier personnel.</p><p><strong>Famille</strong> : le pot commun des membres actifs.</p><p class="notice">Les dossiers privés sont séparés dans le site. L’administrateur Linux de l’iMac garde un accès technique au disque.</p><a class="btn primary" href="#files">Ouvrir mes fichiers</a></section></div>`+
+      `<section class="panel setting health-panel" id="health-panel" aria-busy="true"><h2>Santé de l’iMac</h2><p class="notice">Lecture des relevés…</p></section>`+
       (accounts?`<section class="panel setting family-accounts"><div class="toolbar"><h2>Comptes de la famille</h2><button class="btn primary" onclick="localCreateAccount()">Ajouter un membre</button></div><p class="notice">Chaque personne utilise son propre compte. Désactiver un accès conserve ses fichiers et ferme ses sessions web. L’accès Tailscale se gère séparément.</p><div id="family-accounts"></div></section>`:''));
+    void fillHealthPanel(generation);
     if(accounts){
       const list=$('#family-accounts');
       for(const account of accounts.accounts){
@@ -313,6 +385,34 @@ settingsPage=async function(){
     }
   }catch(error){if(route()==='settings'&&generation===localGeneration)shell(head('Réglages','Accès indisponible')+`<p class="notice" role="alert">${esc(error.message)}</p><button class="btn" onclick="settingsPage()">Réessayer</button>`);}
 };
+function healthDiskRows(disk){
+  const value=(n,unit='')=>Number.isSafeInteger(n)?new Intl.NumberFormat('fr-CH').format(n)+unit:'—';
+  const verdict={ok:'Bonne santé',attention:'À surveiller',alerte:'En danger',inconnu:'Non vérifié'}[healthState(disk.state)];
+  return `<div class="health-block"><h3><span class="status" data-state="${healthState(disk.state)}"><i></i><span>${disk.role==='imac'?'Disque de l’iMac':'Disque de sauvegarde (LaCie)'} · ${verdict}</span></span></h3><dl>
+<div><dt>Température</dt><dd>${value(disk.temperature,' °C')}</dd></div>
+<div><dt>Heures de fonctionnement</dt><dd>${value(disk.powerOnHours,' h')}</dd></div>
+<div><dt>Secteurs remplacés</dt><dd>${value(disk.reallocated)}</dd></div>
+<div><dt>Secteurs en attente / illisibles</dt><dd>${value(disk.pending)} / ${value(disk.uncorrectable)}</dd></div>
+<div><dt>Dernier relevé</dt><dd>${Number.isSafeInteger(disk.checkedAt)?healthAge(disk.checkedAt):'—'}</dd></div></dl></div>`;
+}
+async function fillHealthPanel(generation){
+  const panel=$('#health-panel');if(!panel)return;
+  try{
+    const data=await localAPI('/api/health');
+    if(!panel.isConnected||generation!==localGeneration)return;
+    const backup=data.backup,disks=(data.disks||[]).filter(d=>d&&(d.role==='imac'||d.role==='sauvegarde'));
+    const summary=healthSummary(data);
+    const backupBlock=backup?`<div class="health-block"><h3><span class="status" data-state="${healthState(backup.state)}"><i></i><span>Sauvegarde de nuit · ${backup.ok?(backup.state==='ok'?'À jour':'Nuit manquée'):'Dernière tentative échouée'}</span></span></h3><dl>
+<div><dt>Dernière tentative</dt><dd>${Number.isSafeInteger(backup.checkedAt)?healthAge(backup.checkedAt):'—'}</dd></div>
+<div><dt>Versions conservées</dt><dd>${Number.isSafeInteger(backup.snapshots)?backup.snapshots:'—'}</dd></div>
+<div><dt>Espace libre sur le LaCie</dt><dd>${Number.isSafeInteger(backup.freePercent)?backup.freePercent+' %':'—'}</dd></div></dl></div>`:'<div class="health-block"><h3><span class="status" data-state="inconnu"><i></i><span>Sauvegarde de nuit · aucune trouvée</span></span></h3></div>';
+    panel.innerHTML=`<h2>Santé de l’iMac</h2><p class="health-lead"><span class="status" data-state="${summary.state}"><i></i><span>${esc(summary.title)}</span></span></p><div class="health-grid">${disks.map(healthDiskRows).join('')}${backupBlock}</div><p class="notice">Relevé SMART chaque heure, sauvegarde complète chaque nuit à 3h15 sur le disque LaCie. On garde 14 jours, puis une version par semaine (8 semaines) et par mois (12 mois).</p>`;
+  }catch(error){
+    if(!panel.isConnected)return;
+    panel.innerHTML='<h2>Santé de l’iMac</h2><p class="notice" role="alert">Relevés indisponibles pour le moment.</p>';
+  }
+  panel.setAttribute('aria-busy','false');
+}
 function localCreateAccount(){
   modal('<h2>Ajouter un membre</h2><form id="family-create"><label for="member-name">Identifiant</label><input class="modal-input" id="member-name" autocomplete="off" required maxlength="64"><label for="member-password">Mot de passe initial (12 caractères minimum)</label><input class="modal-input" id="member-password" type="password" autocomplete="new-password" required minlength="12" maxlength="128"><p class="notice">Transmettez ces identifiants en privé. Cette personne pourra changer son mot de passe dans son compte. Son dossier personnel sera vide au départ.</p><button class="btn primary">Créer le compte</button><p id="member-error" class="notice" role="alert"></p></form>');
   $('#family-create').onsubmit=async e=>{e.preventDefault();const button=e.target.querySelector('button');button.disabled=true;try{await localJSON('/api/accounts',{user:$('#member-name').value.trim(),password:$('#member-password').value});$('#member-password').value='';$('#modal').close();await settingsPage();toast('Compte créé.');}catch(error){$('#member-password').value='';$('#member-error').textContent=error.message;button.disabled=false;}};
